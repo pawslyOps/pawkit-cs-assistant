@@ -181,7 +181,7 @@ table.bk .num{text-align:right;white-space:nowrap}
     <div class="chatcol">
       <main id="log" aria-live="polite"></main>
       <form class="ask" id="ask">
-        <textarea id="q" rows="1" placeholder="Paste the customer's WhatsApp message or ask about an SOP…" aria-label="Your question"></textarea>
+        <textarea id="q" rows="1" placeholder="Paste the customer's WhatsApp message, ask about an SOP, or type a phone number…" aria-label="Your question"></textarea>
         <button class="send" id="send" type="submit">Send</button>
       </form>
     </div>
@@ -400,8 +400,14 @@ function renderAnswer(r, secs) {
   $('log').scrollTop = d.offsetTop - 12;
 }
 
+// A bare phone number or booking ID is a customer lookup, not an SOP question: send it to the Customers tab.
+function isLookup(q) {
+  if (/^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/.test(q)) return false;   // a date, not a phone number
+  return (/^[+()\d\s.-]+$/.test(q) && q.replace(/\D/g, '').length >= 7) || /^(booking-?\d+|cust\d+)$/i.test(q);
+}
 function ask(q) {
   q = (q || '').trim(); if (!q || busy) return;
+  if (isLookup(q)) { $('q').value = ''; grow(); tab('cust'); $('cq').value = q; $('findForm').requestSubmit(); return; }
   busy = true; $('send').disabled = true; $('q').value = ''; grow();
   add('user', esc(q));
   var t0 = Date.now(), wait = add('bot', '<div class="typing"><span class="dots"><span></span><span></span><span></span></span><span class="t">Checking the SOPs…</span></div>');
