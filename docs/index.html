@@ -106,6 +106,15 @@ table.bk td:first-child{white-space:nowrap}
 .find{display:flex;gap:8px}
 .find input{flex:1;min-width:0;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px;outline:none}
 .find input:focus{border-color:var(--brand)}
+/* provider visits view: one day's bookings from Zoho, grouped by provider */
+#pvForm{flex-wrap:wrap;align-items:center}
+#pvForm #pvDay{flex:0 0 auto}
+#pvForm #pvQ{flex:1 1 200px}
+#pvForm .ghost{height:42px;padding:0 12px;font-size:14px}
+.pvsum{font-size:13px;color:var(--muted)}
+#pvOut .sec{margin-top:16px}
+#pvOut table.bk td:nth-child(5){min-width:150px}
+.sec h4 .pill{margin-left:6px;letter-spacing:0;text-transform:none}
 .results{display:flex;flex-direction:column;gap:6px}
 .res{display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%}
 .res:hover,.res.on{border-color:var(--brand)}
@@ -174,6 +183,7 @@ table.bk .num{text-align:right;white-space:nowrap}
     <nav class="tabs" role="tablist" aria-label="Paw-paw">
       <button class="tab" role="tab" id="tabAsk" aria-selected="true" aria-controls="vAsk" type="button">Ask</button>
       <button class="tab" role="tab" id="tabCust" aria-selected="false" aria-controls="vCust" type="button">Customers</button>
+      <button class="tab" role="tab" id="tabProv" aria-selected="false" aria-controls="vProv" type="button">Provider Visits</button>
     </nav>
     <div class="sp"></div>
     <span class="badge" id="leadBadge" hidden>Lead</span>
@@ -215,6 +225,21 @@ table.bk .num{text-align:right;white-space:nowrap}
       <div id="cOut"><div class="empty"><b>Find a pet owner</b>Search by mobile number (last 8 digits are enough), owner name, pet name, or a booking ID like BOOKING-20251102001. Results come straight from Zoho CRM and are read-only.</div></div>
     </div>
   </div>
+
+  <!-- Provider Visits: read-only day list of bookings from Zoho CRM, grouped by provider -->
+  <div class="view custv" id="vProv" role="tabpanel" aria-labelledby="tabProv" hidden>
+    <div class="cwrap">
+      <form class="find" id="pvForm">
+        <button type="button" class="ghost" id="pvPrev" aria-label="Previous day">‹</button>
+        <input id="pvDay" type="date" aria-label="Day">
+        <button type="button" class="ghost" id="pvNext" aria-label="Next day">›</button>
+        <button type="button" class="ghost" id="pvToday">Today</button>
+        <input id="pvQ" type="search" placeholder="Filter by provider name" aria-label="Filter by provider name" autocomplete="off">
+        <button class="send" id="pvBtn" type="submit">Refresh</button>
+      </form>
+      <div id="pvOut"><div class="empty"><b>Provider visits</b>Every visit booked for the day, grouped by provider, with the provider's latest update. Read-only, straight from Zoho CRM.</div></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -248,10 +273,10 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function
 /* ---------- sign-in ---------- */
 function show(signedIn) {
   $('gate').hidden = signedIn; $('top').hidden = !signedIn;
-  if (!signedIn) { $('vAsk').hidden = $('vCust').hidden = true; clearInterval(noticeTimer); $('pass').focus(); return; }
+  if (!signedIn) { $('vAsk').hidden = $('vCust').hidden = $('vProv').hidden = true; clearInterval(noticeTimer); $('pass').focus(); return; }
   $('leadBadge').hidden = !session.lead; $('postForm').hidden = !session.lead;
   $('ntBy').value = load(BY) || '';
-  tab(location.hash === '#customers' ? 'cust' : 'ask');
+  tab(location.hash === '#customers' ? 'cust' : location.hash === '#providers' ? 'prov' : 'ask');
   if (!chat.length) hello();
   loadNotices(); clearInterval(noticeTimer); noticeTimer = setInterval(loadNotices, 5 * 60e3);
   loadUsage();
@@ -287,14 +312,15 @@ function warm() { if (session) call({ a: 'warm', token: session.token }).catch(f
 
 /* ---------- tabs ---------- */
 function tab(which) {
-  var ask = which === 'ask';
-  $('tabAsk').setAttribute('aria-selected', ask); $('tabCust').setAttribute('aria-selected', !ask);
-  $('vAsk').hidden = !ask; $('vCust').hidden = ask; $('newChat').hidden = !ask;
-  try { history.replaceState(null, '', ask ? location.pathname + location.search : '#customers'); } catch (e) {}
-  (ask ? $('q') : $('cq')).focus();
+  var ask = which === 'ask', cust = which === 'cust', prov = which === 'prov';
+  $('tabAsk').setAttribute('aria-selected', ask); $('tabCust').setAttribute('aria-selected', cust); $('tabProv').setAttribute('aria-selected', prov);
+  $('vAsk').hidden = !ask; $('vCust').hidden = !cust; $('vProv').hidden = !prov; $('newChat').hidden = !ask;
+  try { history.replaceState(null, '', ask ? location.pathname + location.search : cust ? '#customers' : '#providers'); } catch (e) {}
+  if (prov) openVisits(); else (ask ? $('q') : $('cq')).focus();
 }
 $('tabAsk').addEventListener('click', function () { tab('ask'); });
 $('tabCust').addEventListener('click', function () { tab('cust'); });
+$('tabProv').addEventListener('click', function () { tab('prov'); });
 
 /* ---------- team notices ---------- */
 function day(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Singapore' }); }
@@ -524,6 +550,70 @@ function openCustomer(id) {
     cMsg(h + '</div>');
   }).catch(function () { cMsg('<div class="notice">No connection. Try again.</div>'); });
 }
+
+/* ---------- provider visits ---------- */
+var pv = { day: '', rows: [], at: 0, busy: false, more: false, read: '' };
+function sgToday() { try { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); } catch (e) { return new Date().toISOString().slice(0, 10); } }
+function shiftDay(day, n) { var d = new Date(day + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function hm(iso) { var d = new Date(iso); return !iso || isNaN(d) ? '' : d.toLocaleTimeString('en-SG', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Singapore' }); }
+// The provider's latest tap (Visit Status in Zoho): green when done, red when the visit needs CS, amber when late.
+function vpill(s) {
+  var t = String(s || '').toLowerCase(), c = 'p-mute';
+  if (/complet/.test(t)) c = 'p-ok';
+  else if (/declin|cancel|no.?show|reschedul/.test(t)) c = 'p-bad';
+  else if (/delay|late|checking/.test(t)) c = 'p-warn';
+  return s ? '<span class="pill ' + c + '">' + esc(s) + '</span>' : '<span class="small">No update yet</span>';
+}
+function pvMsg(html) { $('pvOut').innerHTML = html; }
+function loadVisits(fresh) {
+  if (pv.busy || !session) return;
+  var day = $('pvDay').value || sgToday(); $('pvDay').value = day;
+  pv.busy = true; var btn = $('pvBtn'); btn.disabled = true; btn.textContent = 'Loading…';
+  if (day !== pv.day) pvMsg('<div class="empty">Loading the visits from Zoho…</div>');
+  call({ a: 'visits', token: session.token, day: day, fresh: !!fresh }).then(function (r) {
+    if (!r.ok) { if (!r.relogin) pvMsg('<div class="notice">' + esc(r.error || 'Could not load the visits.') + '</div>'); return; }
+    pv.day = r.day; pv.rows = r.visits || []; pv.at = Date.now(); pv.more = !!r.more; pv.read = r.at || ''; drawVisits();
+  }).catch(function () { pvMsg('<div class="notice">No connection. Try again.</div>'); })
+    .then(function () { pv.busy = false; btn.disabled = false; btn.textContent = 'Refresh'; });
+}
+function drawVisits() {
+  var typed = $('pvQ').value.trim(), q = typed.toLowerCase(), dayTxt = when(pv.day), all = pv.rows.length;
+  if (!all) { pvMsg('<div class="empty"><b>No visits on ' + esc(dayTxt) + '</b>Zoho has no booking with a visit time on this day.</div>'); return; }
+  var groups = {}, order = [];
+  pv.rows.forEach(function (v) {
+    var k = v.by || '';
+    if (q && k.toLowerCase().indexOf(q) < 0) return;
+    if (!groups[k]) { groups[k] = []; order.push(k); }
+    groups[k].push(v);
+  });
+  order.sort(function (a, b) { return !a ? -1 : !b ? 1 : a.localeCompare(b); });   // bookings with no provider first, then A to Z
+  if (!order.length) { pvMsg('<div class="empty"><b>No provider matches "' + esc(typed) + '"</b>' + all + ' visit' + (all === 1 ? '' : 's') + ' on ' + esc(dayTxt) + '. Clear the filter to see ' + (all === 1 ? 'it' : 'them') + '.</div>'); return; }
+  var shown = order.reduce(function (n, k) { return n + groups[k].length; }, 0), named = order.filter(Boolean).length;
+  var h = '<div class="pvsum">' + esc(dayTxt) + ' · ' + shown + ' visit' + (shown === 1 ? '' : 's') + ' · ' + named + ' provider' + (named === 1 ? '' : 's') +
+    (pv.read ? ' · read from Zoho at ' + esc(hm(pv.read)) : '') + (pv.more ? ' · showing the first 200' : '') + '</div>';
+  order.forEach(function (k) {
+    var rows = groups[k];
+    h += '<div class="sec"><h4>' + (k ? esc(k) : 'No provider assigned yet') + ' (' + rows.length + ')' + (k ? '' : ' <span class="pill p-bad">Needs a provider</span>') + '</h4>' +
+      '<div class="tbl"><table class="bk"><thead><tr><th>Time</th><th>Customer</th><th>Pet</th><th>Service</th><th>Area</th><th>Booking</th><th>Provider update</th></tr></thead><tbody>';
+    rows.forEach(function (v) {
+      var upd = vpill(v.v) + (v.vt ? '<div class="small">at ' + esc(hm(v.vt)) + '</div>' : '') +
+        (v.late ? '<div class="small">' + esc(v.late) + ' min late' + (v.eta ? ' · new arrival ' + esc(hm(v.eta)) : '') + '</div>' : '');
+      h += '<tr><td><a class="zlink" href="' + esc(v.link) + '" target="_blank" rel="noopener">' + esc(hm(v.d) || 'No time') + '</a>' + (v.e ? '<span class="small"> to ' + esc(hm(v.e)) + '</span>' : '') +
+        '<div class="small">' + esc(v.code) + '</div></td><td>' + esc(v.owner) + '</td><td>' + esc(v.pet) + '</td><td>' + esc(v.cat) + '</td><td>' + esc(v.area) + '</td>' +
+        '<td>' + pill(v.s) + (v.why ? '<div class="small">' + esc(v.why) + '</div>' : '') + '</td><td>' + upd + '</td></tr>';
+    });
+    h += '</tbody></table></div></div>';
+  });
+  pvMsg(h);
+}
+// Opening the tab reads the day once; after that only a new day, Refresh, or a minute's age reads Zoho again.
+function openVisits() { if (!$('pvDay').value) $('pvDay').value = sgToday(); if ($('pvDay').value !== pv.day || Date.now() - pv.at > 60e3) loadVisits(false); }
+$('pvForm').addEventListener('submit', function (ev) { ev.preventDefault(); loadVisits(true); });
+$('pvDay').addEventListener('change', function () { loadVisits(false); });
+$('pvPrev').addEventListener('click', function () { $('pvDay').value = shiftDay($('pvDay').value || sgToday(), -1); loadVisits(false); });
+$('pvNext').addEventListener('click', function () { $('pvDay').value = shiftDay($('pvDay').value || sgToday(), 1); loadVisits(false); });
+$('pvToday').addEventListener('click', function () { $('pvDay').value = sgToday(); loadVisits(false); });
+$('pvQ').addEventListener('input', function () { if (pv.day) drawVisits(); });
 
 show(!!session); if (session) warm();
 </script>
