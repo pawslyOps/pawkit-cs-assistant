@@ -189,6 +189,7 @@ table.bk .num{text-align:right;white-space:nowrap}
       <button class="ntoggle" id="ntoggle" type="button" aria-expanded="true"><span id="ntLabel">Team notices</span><span aria-hidden="true">▾</span></button>
       <h2>Team notices <span class="n" id="ntCount">0</span></h2>
       <p class="hint">SOP changes from your leads, newest first. Paw-paw follows these over the articles.</p>
+      <p class="hint" id="usage" hidden></p>
       <form class="post" id="postForm" hidden>
         <textarea id="ntText" maxlength="1200" placeholder="What changed? e.g. From 1 Dec, the late-cancellation fee for grooming is S$30." aria-label="New team notice"></textarea>
         <input id="ntBy" maxlength="40" placeholder="Your name" aria-label="Your name" autocomplete="name">
@@ -248,6 +249,19 @@ function show(signedIn) {
   tab(location.hash === '#customers' ? 'cust' : 'ask');
   if (!chat.length) hello();
   loadNotices(); clearInterval(noticeTimer); noticeTimer = setInterval(loadNotices, 5 * 60e3);
+  loadUsage();
+}
+// Leads only: how many questions the team asked Paw-paw this week and last week (counts, no question text).
+function loadUsage() {
+  var el = $('usage'); el.hidden = true;
+  if (!session || !session.lead) return;
+  call({ a: 'usage', token: session.token }).then(function (r) {
+    if (!r.ok) return;
+    var w = r.weeks || [], now = w[0] || { q: 0, agent: 0, ai: 0, search: 0 }, prev = w[1];
+    el.textContent = 'Usage this week: ' + now.q + ' question' + (now.q === 1 ? '' : 's') + ' (' + now.agent + ' from agents' +
+      (now.search ? ', ' + now.search + ' answered by search only' : '') + ')' + (prev ? '. Last week: ' + prev.q + '.' : '.');
+    el.hidden = false;
+  }).catch(function () {});
 }
 function signOut(msg) { session = null; store(KEY, null); $('gateErr').textContent = msg || ''; show(false); }
 $('signOutBtn').addEventListener('click', function () { signOut(''); });
